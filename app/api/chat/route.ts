@@ -3,8 +3,10 @@ import OpenAI from "openai";
 import { cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
 
+// Groq client (free tier) – uses the same env var but different base URL
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
+  baseURL: "https://api.groq.com/openai/v1",
 });
 
 export async function POST(req: Request) {
@@ -34,6 +36,7 @@ export async function POST(req: Request) {
       .single();
 
     if (convError) {
+      console.error("Conversation creation error:", convError);
       return new Response("Failed to create conversation", { status: 500 });
     }
     convId = conv.id;
@@ -42,11 +45,14 @@ export async function POST(req: Request) {
   // Save the last user message
   const lastUserMessage = messages[messages.length - 1];
   if (lastUserMessage.role === "user") {
-    await supabase.from("messages").insert({
+    const { error: msgError } = await supabase.from("messages").insert({
       conversation_id: convId,
       role: "user",
       content: lastUserMessage.content,
     });
+    if (msgError) {
+      console.error("Message insert error:", msgError);
+    }
   }
 
   // System prompt
@@ -57,66 +63,56 @@ export async function POST(req: Request) {
     ...messages,
   ];
 
-  // Start the stream from OpenAI
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4o",
-    stream: true,
-    messages: fullMessages as any,
-  });
+  try {
+    // Use a free Groq model – fast and capable
+    const completion = await openai.chat.completions.create({
+      model: "llama-3.1-8b-instant",
+      stream: true,
+      messages: fullMessages as any,
+    });
 
-  // Collect the full assistant response
-  let assistantContent = "";
+    let assistantContent = "";
+    const stream = new ReadableStream({
+      async start(controller) {
+        for await (const chunk of completion) {
+          const content = chunk.choices[0]?.delta?.content;
+          if (content) {
+            assistantContent += content;
+            controller.enqueue(new TextEncoder().encode(content));
+          }
+        }
+        controller.close();
+      },
+    });
 
-  // Create a ReadableStream from the completion
-  const stream = new ReadableStream({
-    async start(controller) {
-      for await (const chunk of completion) {
-        const content = chunk.choices[0]?.delta?.content;
-        if (content) {
-          assistantContent += content;
-          // Encode and send the chunk to the client
-          controller.enqueue(new TextEncoder().encode(content));
+    const response = new StreamingTextResponse(stream);
+    response.headers.set("X-Conversation-Id", convId);
+
+    // Save assistant message after streaming
+    (async () => {
+      if (assistantContent) {
+        try {
+          if (messages.length <= 2) {
+            const newTitle = assistantContent.substring(0, 60) || "New chat";
+            await supabase
+              .from("conversations")
+              .update({ title: newTitle })
+              .eq("id", convId);
+          }
+          await supabase.from("messages").insert({
+            conversation_id: convId,
+            role: "assistant",
+            content: assistantContent,
+          });
+        } catch (err) {
+          console.error("Failed to save assistant message:", err);
         }
       }
-      controller.close();
-    },
-    cancel() {
-      // Stream cancelled by client
-    },
-  });
+    })();
 
-  // Return a StreamingTextResponse
-  const response = new StreamingTextResponse(stream);
-
-  // Save the assistant message after the stream ends (via a separate promise)
-  (async () => {
-    // Wait for the stream to be fully read (just a small delay to ensure it's done)
-    // In production you'd hook into the response's completion, but here we rely on
-    // the fact that `assistantContent` is fully populated after the for-await loop.
-    if (assistantContent) {
-      try {
-        // Update conversation title if new (first exchange)
-        if (messages.length <= 2) {
-          const newTitle = assistantContent.substring(0, 60) || "New chat";
-          await supabase
-            .from("conversations")
-            .update({ title: newTitle })
-            .eq("id", convId);
-        }
-
-        await supabase.from("messages").insert({
-          conversation_id: convId,
-          role: "assistant",
-          content: assistantContent,
-        });
-      } catch (err) {
-        console.error("Failed to save assistant message:", err);
-      }
-    }
-  })();
-
-  // Append the conversation id header
-  response.headers.set("X-Conversation-Id", convId);
-
-  return response;
+    return response;
+  } catch (error: any) {
+    console.error("Groq API error:", error);
+    return new Response(`AI Error: ${error.message}`, { status: 500 });
+  }
 }
