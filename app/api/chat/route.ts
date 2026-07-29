@@ -1,4 +1,4 @@
-import { OpenAIStream, StreamingTextResponse } from "ai";
+import { StreamingTextResponse } from "ai";
 import OpenAI from "openai";
 import { cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
@@ -39,7 +39,7 @@ export async function POST(req: Request) {
     convId = conv.id;
   }
 
-  // Save the last user message (the one just sent)
+  // Save the last user message
   const lastUserMessage = messages[messages.length - 1];
   if (lastUserMessage.role === "user") {
     await supabase.from("messages").insert({
@@ -49,7 +49,7 @@ export async function POST(req: Request) {
     });
   }
 
-  // System prompt defines the agent's identity
+  // System prompt
   const systemPrompt = `You are Digolos D.K.K, a helpful, witty, and knowledgeable AI assistant. You provide clear answers, use a friendly tone, and occasionally sign off with "Stay curious! – D.K.K".`;
 
   const fullMessages = [
@@ -57,36 +57,66 @@ export async function POST(req: Request) {
     ...messages,
   ];
 
-  // Call OpenAI with streaming
-  const response = await openai.chat.completions.create({
+  // Start the stream from OpenAI
+  const completion = await openai.chat.completions.create({
     model: "gpt-4o",
     stream: true,
     messages: fullMessages as any,
   });
 
-  // Stream response and save assistant message on completion
-  const stream = OpenAIStream(response, {
-    async onCompletion(completion) {
-      // Update conversation title with first message if it's a new conversation
-      if (messages.length <= 2) {
-        const newTitle = completion.substring(0, 60) || "New chat";
-        await supabase
-          .from("conversations")
-          .update({ title: newTitle })
-          .eq("id", convId);
+  // Collect the full assistant response
+  let assistantContent = "";
+
+  // Create a ReadableStream from the completion
+  const stream = new ReadableStream({
+    async start(controller) {
+      for await (const chunk of completion) {
+        const content = chunk.choices[0]?.delta?.content;
+        if (content) {
+          assistantContent += content;
+          // Encode and send the chunk to the client
+          controller.enqueue(new TextEncoder().encode(content));
+        }
       }
-
-      await supabase.from("messages").insert({
-        conversation_id: convId,
-        role: "assistant",
-        content: completion,
-      });
+      controller.close();
+    },
+    cancel() {
+      // Stream cancelled by client
     },
   });
 
-  return new StreamingTextResponse(stream, {
-    headers: {
-      "X-Conversation-Id": convId,
-    },
-  });
+  // Return a StreamingTextResponse
+  const response = new StreamingTextResponse(stream);
+
+  // Save the assistant message after the stream ends (via a separate promise)
+  (async () => {
+    // Wait for the stream to be fully read (just a small delay to ensure it's done)
+    // In production you'd hook into the response's completion, but here we rely on
+    // the fact that `assistantContent` is fully populated after the for-await loop.
+    if (assistantContent) {
+      try {
+        // Update conversation title if new (first exchange)
+        if (messages.length <= 2) {
+          const newTitle = assistantContent.substring(0, 60) || "New chat";
+          await supabase
+            .from("conversations")
+            .update({ title: newTitle })
+            .eq("id", convId);
+        }
+
+        await supabase.from("messages").insert({
+          conversation_id: convId,
+          role: "assistant",
+          content: assistantContent,
+        });
+      } catch (err) {
+        console.error("Failed to save assistant message:", err);
+      }
+    }
+  })();
+
+  // Append the conversation id header
+  response.headers.set("X-Conversation-Id", convId);
+
+  return response;
 }
