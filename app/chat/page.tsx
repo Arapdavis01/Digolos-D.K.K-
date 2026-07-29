@@ -11,7 +11,6 @@ export default function ChatPage() {
   const [user, setUser] = useState<any>(null);
   const [conversations, setConversations] = useState<any[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
-  const [loadingHistory, setLoadingHistory] = useState(false);
 
   // Load user
   useEffect(() => {
@@ -36,7 +35,7 @@ export default function ChatPage() {
     fetchConversations();
   }, [fetchConversations]);
 
-  // When conversation changes, load its messages as initialMessages
+  // State to hold loaded messages when selecting an existing conversation
   const [initialMessages, setInitialMessages] = useState<any[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
 
@@ -48,7 +47,6 @@ export default function ChatPage() {
       .select("*")
       .eq("conversation_id", convId)
       .order("created_at", { ascending: true });
-    // Map to format useChat expects
     const formatted = messages?.map((m: any) => ({
       id: m.id,
       role: m.role,
@@ -58,13 +56,13 @@ export default function ChatPage() {
     setLoadingMessages(false);
   };
 
-  // Handle new chat
+  // Reset for a new chat
   const handleNewChat = () => {
     setActiveConvId(null);
     setInitialMessages([]);
   };
 
-  // useChat with controlled initialMessages
+  // useChat with controlled initialMessages; resets when id changes
   const { messages, input, handleInputChange, handleSubmit, isLoading } = useChat({
     api: "/api/chat",
     initialMessages: activeConvId ? initialMessages : [],
@@ -72,11 +70,9 @@ export default function ChatPage() {
       conversationId: activeConvId,
     },
     onFinish: () => {
-      // After assistant response, refresh conversation list (title may be updated)
       fetchConversations();
     },
-    // Use a key to reset the chat when switching conversations
-    id: activeConvId || "new",
+    id: activeConvId || "new", // unique key to force re-mount on new/switch
   });
 
   const handleLogout = async () => {
@@ -125,69 +121,64 @@ export default function ChatPage() {
         )}
       </aside>
 
-      {/* Main chat area */}
+      {/* Main chat area – always visible */}
       <main className="flex-1 flex flex-col">
-        {activeConvId || (!activeConvId && messages.length > 0) ? (
-          <>
-            <div className="flex-1 overflow-y-auto p-6 space-y-6">
-              {loadingMessages ? (
-                <p className="text-gray-500">Loading conversation...</p>
-              ) : (
-                messages.map((m) => (
-                  <div key={m.id} className="flex flex-col">
-                    <div className="text-xs font-semibold text-gray-500 mb-1">
-                      {m.role === "user" ? "You" : "Digolos D.K.K"}
-                    </div>
-                    <div
-                      className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm ${
-                        m.role === "user"
-                          ? "bg-gray-100 self-end"
-                          : "bg-blue-50 self-start"
-                      }`}
-                    >
-                      {m.content}
-                    </div>
-                  </div>
-                ))
-              )}
-              {isLoading && (
-                <div className="text-gray-400 text-sm animate-pulse">
-                  Digolos D.K.K is thinking...
-                </div>
-              )}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {loadingMessages ? (
+            <p className="text-gray-500">Loading conversation...</p>
+          ) : messages.length === 0 ? (
+            // Welcome screen when no messages (new conversation)
+            <div className="flex flex-col items-center justify-center h-full text-center">
+              <h1 className="text-3xl font-bold mb-2">Digolos D.K.K</h1>
+              <p className="text-gray-500 mb-8">
+                Your intelligent assistant. Start a new chat or pick a previous one.
+              </p>
             </div>
-            <form
-              onSubmit={handleSubmit}
-              className="border-t p-4 flex gap-3 bg-white"
-            >
-              <input
-                value={input}
-                onChange={handleInputChange}
-                placeholder="Message Digolos D.K.K..."
-                className="flex-1 rounded-xl border border-gray-300 px-4 py-3 text-sm focus:border-black focus:outline-none focus:ring-1 focus:ring-black"
-                disabled={isLoading}
-              />
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="rounded-xl bg-black px-5 py-3 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-50"
-              >
-                Send
-              </button>
-            </form>
-          </>
-        ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-            <h1 className="text-3xl font-bold mb-2">Digolos D.K.K</h1>
-            <p className="text-gray-500 mb-8">Your intelligent assistant. Start a new chat or pick a previous one.</p>
-            <button
-              onClick={handleNewChat}
-              className="rounded-full bg-black px-6 py-3 text-sm font-medium text-white hover:bg-gray-800"
-            >
-              Start a new conversation
-            </button>
-          </div>
-        )}
+          ) : (
+            messages.map((m) => (
+              <div key={m.id} className="flex flex-col">
+                <div className="text-xs font-semibold text-gray-500 mb-1">
+                  {m.role === "user" ? "You" : "Digolos D.K.K"}
+                </div>
+                <div
+                  className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm ${
+                    m.role === "user"
+                      ? "bg-gray-100 self-end"
+                      : "bg-blue-50 self-start"
+                  }`}
+                >
+                  {m.content}
+                </div>
+              </div>
+            ))
+          )}
+          {isLoading && (
+            <div className="text-gray-400 text-sm animate-pulse">
+              Digolos D.K.K is thinking...
+            </div>
+          )}
+        </div>
+
+        {/* Input always shown at bottom */}
+        <form
+          onSubmit={handleSubmit}
+          className="border-t p-4 flex gap-3 bg-white"
+        >
+          <input
+            value={input}
+            onChange={handleInputChange}
+            placeholder="Message Digolos D.K.K..."
+            className="flex-1 rounded-xl border border-gray-300 px-4 py-3 text-sm focus:border-black focus:outline-none focus:ring-1 focus:ring-black"
+            disabled={isLoading}
+          />
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="rounded-xl bg-black px-5 py-3 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-50"
+          >
+            Send
+          </button>
+        </form>
       </main>
     </div>
   );
