@@ -3,13 +3,18 @@ import OpenAI from "openai";
 import { cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
 
-// Groq client (free tier) – uses the same env var but different base URL
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  baseURL: "https://api.groq.com/openai/v1",
-});
-
 export async function POST(req: Request) {
+  // Create the client dynamically so the build doesn't fail if the env var is missing
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return new Response("OpenAI API key is not configured", { status: 500 });
+  }
+
+  const openai = new OpenAI({
+    apiKey,
+    baseURL: "https://api.groq.com/openai/v1",
+  });
+
   const cookieStore = await cookies();
   const supabase = createClient(cookieStore);
 
@@ -64,7 +69,6 @@ export async function POST(req: Request) {
   ];
 
   try {
-    // Use a free Groq model – fast and capable
     const completion = await openai.chat.completions.create({
       model: "llama-3.1-8b-instant",
       stream: true,
