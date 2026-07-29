@@ -10,8 +10,15 @@ export default function AuthPage() {
   const [isSignUp, setIsSignUp] = useState(false);
   const [error, setError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const router = useRouter();
   const supabase = createClient();
+
+  // Auto-hide toast after 3 seconds
+  const showToast = (message: string, type: "success" | "error") => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -24,8 +31,9 @@ export default function AuthPage() {
       });
       if (error) {
         setError(error.message);
+        showToast(error.message, "error");
       } else {
-        alert("Check your email to confirm your account!");
+        showToast("Account created successfully! Please check your email to confirm.", "success");
         setIsSignUp(false);
       }
     } else {
@@ -35,8 +43,13 @@ export default function AuthPage() {
       });
       if (error) {
         setError(error.message);
+        showToast(error.message, "error");
       } else {
-        router.push("/chat");
+        showToast("Login successful! Redirecting...", "success");
+        // Small delay so the user can see the toast, then redirect
+        setTimeout(() => {
+          router.push("/chat");
+        }, 800);
       }
     }
   };
@@ -50,6 +63,19 @@ export default function AuthPage() {
             {isSignUp ? "Create your account" : "Sign in to your account"}
           </p>
         </div>
+
+        {/* Toast notification */}
+        {toast && (
+          <div
+            className={`p-3 rounded-md text-sm font-medium ${
+              toast.type === "success"
+                ? "bg-green-50 text-green-700 border border-green-200"
+                : "bg-red-50 text-red-600 border border-red-200"
+            }`}
+          >
+            {toast.message}
+          </div>
+        )}
 
         <form className="space-y-6" onSubmit={handleSubmit}>
           {error && (
