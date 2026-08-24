@@ -3,6 +3,17 @@ import OpenAI from "openai";
 import { cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
 
+// List of free models on OpenRouter (updated Aug 2026)
+const FREE_MODELS = [
+  "mistralai/mistral-7b-instruct:free",
+  "google/gemma-2-9b-it:free",
+  "meta-llama/llama-3.2-3b-instruct:free",
+  "microsoft/phi-3-mini-128k-instruct:free",
+  "openchat/openchat-7b:free",
+  "gryphe/mythomax-l2-13b:free",
+  "nousresearch/hermes-2-pro-llama-3-8b:free"
+];
+
 export async function POST(req: Request) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return new Response("API key missing", { status: 500 });
@@ -46,12 +57,33 @@ export async function POST(req: Request) {
   const systemPrompt = `You are Digolos D.K.K, a helpful, witty, and knowledgeable AI assistant.`;
   const fullMessages = [{ role: "system", content: systemPrompt }, ...messages];
 
-  // Use OpenRouter's stable free model
-  const model = "meta-llama/llama-3.1-8b-instruct:free";
+  // Try each free model until one works
+  let completion = null;
+  let usedModel = "";
+  for (const model of FREE_MODELS) {
+    try {
+      // Test with a tiny request (non-streaming) to see if model is available
+      const test = await openai.chat.completions.create({
+        model,
+        messages: [{ role: "user", content: "ping" }],
+        max_tokens: 1,
+      });
+      usedModel = model;
+      break;
+    } catch (err: any) {
+      console.warn(`Model ${model} failed: ${err.message}`);
+      continue;
+    }
+  }
 
+  if (!usedModel) {
+    return new Response("No free model available. Try again later.", { status: 500 });
+  }
+
+  // Now use the working model with streaming
   try {
     const completion = await openai.chat.completions.create({
-      model,
+      model: usedModel,
       stream: true,
       messages: fullMessages as any,
     });
@@ -73,6 +105,7 @@ export async function POST(req: Request) {
     const response = new StreamingTextResponse(stream);
     response.headers.set("X-Conversation-Id", convId);
 
+    // Save assistant message
     (async () => {
       if (assistantContent) {
         if (messages.length <= 2) {
@@ -89,7 +122,7 @@ export async function POST(req: Request) {
 
     return response;
   } catch (error: any) {
-    console.error("OpenRouter error:", error);
+    console.error("OpenRouter streaming error:", error);
     return new Response(`AI Error: ${error.message}`, { status: 500 });
   }
 }
