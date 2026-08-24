@@ -70,7 +70,7 @@ export async function POST(req: Request) {
 
   try {
     const completion = await openai.chat.completions.create({
-      model: "llama-3.1-8b-instant",
+      model: "llama-3.3-70b-versatile",  // updated to a valid free Groq model
       stream: true,
       messages: fullMessages as any,
     });
